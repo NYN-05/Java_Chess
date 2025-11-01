@@ -1,17 +1,25 @@
 🎮 Gameplay Features
-1. Undo/Redo System ⏮️⏭️
+1. ✅ Undo/Redo System ⏮️⏭️ [IMPLEMENTED]
 Track move history with full board states
 Allow players to undo mistakes
 Redo moves after undoing
+Keyboard shortcuts: Ctrl+Z (Undo), Ctrl+Y (Redo)
+Up to 100 moves history tracked
 Difficulty: Medium
 Impact: High - Very requested feature
-2. Game Timer/Clock ⏱️
+Status: ✅ COMPLETE - See UNDO_REDO_FEATURE.md
+
+2. ✅ Game Timer/Clock ⏱️ [IMPLEMENTED]
 Chess clock with time controls (5+0, 10+0, 15+10, etc.)
 Display remaining time for each player
 Time increment after each move
 Flag when time runs out
+Presets: 5min, 10min, 15+10, 30min, Custom
+Real-time countdown display
+Automatic win on timeout
 Difficulty: Easy-Medium
 Impact: High - Essential for competitive play
+Status: ✅ COMPLETE
 3. Save/Load Games (PGN Format) 💾
 Export games to standard PGN format
 Import and replay PGN games

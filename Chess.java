@@ -14,6 +14,8 @@ import java.io.File;
 import java.awt.Image;
 import java.util.Map;
 import java.util.HashMap;
+import javax.sound.sampled.*;
+import java.awt.FlowLayout;
 
 public class Chess {
     public static void main(String[] args) {
@@ -246,6 +248,256 @@ public class Chess {
         }
     }
 
+    // Chess Timer class for time controls
+    static class ChessTimer {
+        private long whiteTime; // milliseconds
+        private long blackTime; // milliseconds
+        private long lastUpdateTime;
+        private Color activeColor;
+        private boolean running = false;
+        private long increment; // milliseconds per move
+        
+        ChessTimer(int minutesPerSide, int incrementSeconds) {
+            this.whiteTime = minutesPerSide * 60 * 1000L;
+            this.blackTime = minutesPerSide * 60 * 1000L;
+            this.increment = incrementSeconds * 1000L;
+            this.activeColor = Color.WHITE;
+        }
+        
+        void start(Color color) {
+            activeColor = color;
+            lastUpdateTime = System.currentTimeMillis();
+            running = true;
+        }
+        
+        void stop() {
+            if (running) {
+                update();
+                running = false;
+            }
+        }
+        
+        void switchPlayer() {
+            if (running) {
+                update();
+                // Add increment
+                if (activeColor == Color.WHITE) {
+                    whiteTime += increment;
+                } else {
+                    blackTime += increment;
+                }
+                activeColor = (activeColor == Color.WHITE) ? Color.BLACK : Color.WHITE;
+                lastUpdateTime = System.currentTimeMillis();
+            }
+        }
+        
+        private void update() {
+            if (!running) return;
+            long now = System.currentTimeMillis();
+            long elapsed = now - lastUpdateTime;
+            if (activeColor == Color.WHITE) {
+                whiteTime -= elapsed;
+            } else {
+                blackTime -= elapsed;
+            }
+            lastUpdateTime = now;
+        }
+        
+        long getWhiteTime() {
+            if (running && activeColor == Color.WHITE) update();
+            return Math.max(0, whiteTime);
+        }
+        
+        long getBlackTime() {
+            if (running && activeColor == Color.BLACK) update();
+            return Math.max(0, blackTime);
+        }
+        
+        boolean isWhiteOutOfTime() { return getWhiteTime() <= 0; }
+        boolean isBlackOutOfTime() { return getBlackTime() <= 0; }
+        boolean isRunning() { return running; }
+        
+        String formatTime(long millis) {
+            long seconds = millis / 1000;
+            long minutes = seconds / 60;
+            seconds = seconds % 60;
+            return String.format("%d:%02d", minutes, seconds);
+        }
+        
+        void reset(int minutesPerSide, int incrementSeconds) {
+            this.whiteTime = minutesPerSide * 60 * 1000L;
+            this.blackTime = minutesPerSide * 60 * 1000L;
+            this.increment = incrementSeconds * 1000L;
+            this.activeColor = Color.WHITE;
+            this.running = false;
+        }
+    }
+
+    // Sound Manager for game sounds
+    static class SoundManager {
+        private boolean enabled = true;
+        
+        void playMove() { playSound("move"); }
+        void playCapture() { playSound("capture"); }
+        void playCheck() { playSound("check"); }
+        void playCastle() { playSound("castle"); }
+        void playPromotion() { playSound("promote"); }
+        void playGameOver() { playSound("gameover"); }
+        
+        private void playSound(String name) {
+            if (!enabled) return;
+            // Try to play sound file from sounds directory
+            try {
+                File soundFile = new File("sounds/" + name + ".wav");
+                if (soundFile.exists()) {
+                    javax.sound.sampled.AudioInputStream audioStream = 
+                        javax.sound.sampled.AudioSystem.getAudioInputStream(soundFile);
+                    javax.sound.sampled.Clip clip = javax.sound.sampled.AudioSystem.getClip();
+                    clip.open(audioStream);
+                    clip.start();
+                } else {
+                    // Fallback: system beep
+                    java.awt.Toolkit.getDefaultToolkit().beep();
+                }
+            } catch (Exception e) {
+                // Silent fail - sound is not critical
+            }
+        }
+        
+        void setEnabled(boolean enabled) { this.enabled = enabled; }
+        boolean isEnabled() { return enabled; }
+    }
+
+    // Theme class for board color schemes
+    static class Theme {
+        String name;
+        java.awt.Color lightSquare;
+        java.awt.Color darkSquare;
+        java.awt.Color highlightColor;
+        java.awt.Color backgroundColor;
+        
+        Theme(String name, String light, String dark, String highlight, String bg) {
+            this.name = name;
+            this.lightSquare = java.awt.Color.decode(light);
+            this.darkSquare = java.awt.Color.decode(dark);
+            this.highlightColor = java.awt.Color.decode(highlight);
+            this.backgroundColor = java.awt.Color.decode(bg);
+        }
+        
+        static Theme[] getDefaultThemes() {
+            return new Theme[] {
+                new Theme("Classic", "#F0D9B5", "#B58863", "#FFFF66", "#2C2C2C"),
+                new Theme("Blue", "#DEE3E6", "#8CA2AD", "#6699FF", "#1E1E2E"),
+                new Theme("Green", "#FFFFDD", "#86A666", "#99FF99", "#252525"),
+                new Theme("Brown", "#F0DAB5", "#946F51", "#FFD966", "#2C2416"),
+                new Theme("Purple", "#E8D5F2", "#9B7EBD", "#D98FFF", "#1A1A2E"),
+                new Theme("Dark Mode", "#4A4A4A", "#2C2C2C", "#808080", "#000000"),
+                new Theme("High Contrast", "#FFFFFF", "#000000", "#FFFF00", "#333333")
+            };
+        }
+    }
+
+    // Game Statistics tracker
+    static class GameStatistics {
+        int whiteMaterial = 0;
+        int blackMaterial = 0;
+        List<Piece> whiteCaptured = new ArrayList<>();
+        List<Piece> blackCaptured = new ArrayList<>();
+        int moveCount = 0;
+        int whiteChecks = 0;
+        int blackChecks = 0;
+        
+        void reset() {
+            whiteMaterial = 0;
+            blackMaterial = 0;
+            whiteCaptured.clear();
+            blackCaptured.clear();
+            moveCount = 0;
+            whiteChecks = 0;
+            blackChecks = 0;
+        }
+        
+        void calculateMaterial(Board board) {
+            whiteMaterial = 0;
+            blackMaterial = 0;
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    Piece p = board.b[r][c];
+                    if (p != null) {
+                        int value = getPieceValue(p.type);
+                        if (p.color == Color.WHITE) whiteMaterial += value;
+                        else blackMaterial += value;
+                    }
+                }
+            }
+        }
+        
+        void recordCapture(Piece captured) {
+            if (captured == null) return;
+            if (captured.color == Color.WHITE) {
+                blackCaptured.add(captured);
+            } else {
+                whiteCaptured.add(captured);
+            }
+        }
+        
+        int getPieceValue(PieceType type) {
+            return switch (type) {
+                case PAWN -> 1;
+                case KNIGHT, BISHOP -> 3;
+                case ROOK -> 5;
+                case QUEEN -> 9;
+                case KING -> 0; // King has no material value
+            };
+        }
+        
+        int getMaterialAdvantage() {
+            return whiteMaterial - blackMaterial;
+        }
+        
+        String getMaterialString(Color color) {
+            int material = (color == Color.WHITE) ? whiteMaterial : blackMaterial;
+            return String.valueOf(material);
+        }
+    }
+
+    // GameState class to store complete game state for undo/redo
+    static class GameState implements Cloneable {
+        Board board;
+        Color turn;
+        boolean whiteKingMoved;
+        boolean blackKingMoved;
+        boolean whiteRookA_moved;
+        boolean whiteRookH_moved;
+        boolean blackRookA_moved;
+        boolean blackRookH_moved;
+        Pos enPassantTarget;
+        Move lastMove;
+        
+        GameState(Board board, Color turn, boolean whiteKingMoved, boolean blackKingMoved,
+                  boolean whiteRookA_moved, boolean whiteRookH_moved, 
+                  boolean blackRookA_moved, boolean blackRookH_moved,
+                  Pos enPassantTarget, Move lastMove) {
+            this.board = board.clone();
+            this.turn = turn;
+            this.whiteKingMoved = whiteKingMoved;
+            this.blackKingMoved = blackKingMoved;
+            this.whiteRookA_moved = whiteRookA_moved;
+            this.whiteRookH_moved = whiteRookH_moved;
+            this.blackRookA_moved = blackRookA_moved;
+            this.blackRookH_moved = blackRookH_moved;
+            this.enPassantTarget = enPassantTarget;
+            this.lastMove = lastMove;
+        }
+        
+        @Override
+        public GameState clone() {
+            return new GameState(board, turn, whiteKingMoved, blackKingMoved,
+                whiteRookA_moved, whiteRookH_moved, blackRookA_moved, blackRookH_moved,
+                enPassantTarget, lastMove);
+        }
+    }
+
     static class Game {
         Board board = new Board();
         Color turn = Color.WHITE;
@@ -259,6 +511,16 @@ public class Chess {
         boolean blackRookH_moved = false; // h8
         Pos enPassantTarget = null; // square where en-passant capture is possible
 
+        // Undo/Redo system
+        private final java.util.Deque<GameState> undoStack = new java.util.ArrayDeque<>();
+        private final java.util.Deque<GameState> redoStack = new java.util.ArrayDeque<>();
+        private static final int MAX_HISTORY = 100; // Limit history to prevent memory issues
+
+        // Move validation improvements
+        private final List<String> positionHistory = new ArrayList<>(); // For threefold repetition
+        private int halfMoveClock = 0; // For fifty-move rule (counts half-moves since last pawn move or capture)
+        private int fullMoveNumber = 1; // Current move number
+
         // Promotion handler (GUI can set this)
         interface PromotionHandler { Piece choosePromotion(Color byColor); }
         PromotionHandler promotionHandler = null;
@@ -267,10 +529,88 @@ public class Chess {
         public Board getBoard() { return board; }
         public Color getTurn() { return turn; }
         public List<Move> getLegalMovesForTurn() { return legalMoves(turn); }
+        
+        // Undo/Redo functionality
+        public boolean canUndo() { return !undoStack.isEmpty(); }
+        public boolean canRedo() { return !redoStack.isEmpty(); }
+        
+        private void saveState(Move lastMove) {
+            // Save current state before making a move
+            GameState state = new GameState(board, turn, whiteKingMoved, blackKingMoved,
+                whiteRookA_moved, whiteRookH_moved, blackRookA_moved, blackRookH_moved,
+                enPassantTarget, lastMove);
+            undoStack.push(state);
+            
+            // Limit history size to prevent memory issues
+            if (undoStack.size() > MAX_HISTORY) {
+                // Remove the oldest state (at the bottom of the stack)
+                undoStack.removeLast();
+            }
+            
+            // Clear redo stack when a new move is made
+            redoStack.clear();
+        }
+        
+        public boolean undo() {
+            if (!canUndo()) return false;
+            
+            // Save current state to redo stack
+            GameState currentState = new GameState(board, turn, whiteKingMoved, blackKingMoved,
+                whiteRookA_moved, whiteRookH_moved, blackRookA_moved, blackRookH_moved,
+                enPassantTarget, null);
+            redoStack.push(currentState);
+            
+            // Restore previous state
+            GameState prevState = undoStack.pop();
+            board = prevState.board.clone();
+            turn = prevState.turn;
+            whiteKingMoved = prevState.whiteKingMoved;
+            blackKingMoved = prevState.blackKingMoved;
+            whiteRookA_moved = prevState.whiteRookA_moved;
+            whiteRookH_moved = prevState.whiteRookH_moved;
+            blackRookA_moved = prevState.blackRookA_moved;
+            blackRookH_moved = prevState.blackRookH_moved;
+            enPassantTarget = prevState.enPassantTarget;
+            
+            return true;
+        }
+        
+        public Move getLastMoveFromUndo() {
+            if (undoStack.isEmpty()) return null;
+            return undoStack.peek().lastMove;
+        }
+        
+        public boolean redo() {
+            if (!canRedo()) return false;
+            
+            // Save current state to undo stack
+            GameState currentState = new GameState(board, turn, whiteKingMoved, blackKingMoved,
+                whiteRookA_moved, whiteRookH_moved, blackRookA_moved, blackRookH_moved,
+                enPassantTarget, null);
+            undoStack.push(currentState);
+            
+            // Restore next state
+            GameState nextState = redoStack.pop();
+            board = nextState.board.clone();
+            turn = nextState.turn;
+            whiteKingMoved = nextState.whiteKingMoved;
+            blackKingMoved = nextState.blackKingMoved;
+            whiteRookA_moved = nextState.whiteRookA_moved;
+            whiteRookH_moved = nextState.whiteRookH_moved;
+            blackRookA_moved = nextState.blackRookA_moved;
+            blackRookH_moved = nextState.blackRookH_moved;
+            enPassantTarget = nextState.enPassantTarget;
+            
+            return true;
+        }
+        
         public boolean applyMoveIfLegal(Move candidate) {
             List<Move> moves = legalMoves(turn);
             for (Move m : moves) {
                 if (m.from.equals(candidate.from) && m.to.equals(candidate.to)) {
+                    // Save state before making the move (for undo)
+                    saveState(null);
+                    
                     // handle promotion selection
                     if (m.promotion != null && promotionHandler != null) {
                         Piece chosen = promotionHandler.choosePromotion(turn);
@@ -346,6 +686,11 @@ public class Chess {
                         board.set(m.to, m.promotion);
                     }
 
+                    // Update the last move in the current state (top of undo stack)
+                    if (!undoStack.isEmpty()) {
+                        undoStack.peek().lastMove = m;
+                    }
+
                     // switch turn
                     turn = (turn==Color.WHITE?Color.BLACK:Color.WHITE);
                     return true;
@@ -353,7 +698,19 @@ public class Chess {
             }
             return false;
         }
-        public void restart() { board = new Board(); turn = Color.WHITE; }
+        public void restart() { 
+            board = new Board(); 
+            turn = Color.WHITE; 
+            whiteKingMoved = false;
+            blackKingMoved = false;
+            whiteRookA_moved = false;
+            whiteRookH_moved = false;
+            blackRookA_moved = false;
+            blackRookH_moved = false;
+            enPassantTarget = null;
+            undoStack.clear();
+            redoStack.clear();
+        }
 
         void run() {
             while (true) {
@@ -576,6 +933,13 @@ public class Chess {
         private Move lastMove = null;
         private int moveCounter = 0;
         
+        // Timer components
+        private ChessTimer chessTimer = null;
+        private JLabel whiteTimerLabel;
+        private JLabel blackTimerLabel;
+        private javax.swing.Timer timerUpdateTimer;
+        private boolean timerEnabled = false;
+        
         // Optimization: Use more efficient collections
         // original (unscaled) images loaded from disk or generated placeholders
         private final Map<String, Image> originalImages = new HashMap<>(12); // 12 pieces
@@ -651,6 +1015,46 @@ public class Chess {
             frame.setVisible(true);
         }
         
+        private JPanel createTimerPanel() {
+            JPanel timerPanel = new JPanel();
+            timerPanel.setLayout(new BoxLayout(timerPanel, BoxLayout.Y_AXIS));
+            timerPanel.setBackground(PANEL_BG);
+            timerPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(ACCENT_COLOR.darker(), 2),
+                BorderFactory.createEmptyBorder(10, 10, 10, 10)
+            ));
+            timerPanel.setAlignmentX(java.awt.Component.CENTER_ALIGNMENT);
+            
+            // Black timer (on top)
+            JPanel blackTimerPanel = new JPanel(new BorderLayout(5, 0));
+            blackTimerPanel.setBackground(PANEL_BG);
+            JLabel blackLabel = new JLabel("⚫ Black:");
+            blackLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            blackLabel.setForeground(java.awt.Color.GRAY);
+            blackTimerLabel = new JLabel("--:--");
+            blackTimerLabel.setFont(new Font("Courier New", Font.BOLD, 18));
+            blackTimerLabel.setForeground(PANEL_FG);
+            blackTimerPanel.add(blackLabel, BorderLayout.WEST);
+            blackTimerPanel.add(blackTimerLabel, BorderLayout.EAST);
+            timerPanel.add(blackTimerPanel);
+            timerPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+            
+            // White timer (on bottom)
+            JPanel whiteTimerPanel = new JPanel(new BorderLayout(5, 0));
+            whiteTimerPanel.setBackground(PANEL_BG);
+            JLabel whiteLabel = new JLabel("⚪ White:");
+            whiteLabel.setFont(new Font("Segoe UI", Font.BOLD, 14));
+            whiteLabel.setForeground(java.awt.Color.WHITE);
+            whiteTimerLabel = new JLabel("--:--");
+            whiteTimerLabel.setFont(new Font("Courier New", Font.BOLD, 18));
+            whiteTimerLabel.setForeground(PANEL_FG);
+            whiteTimerPanel.add(whiteLabel, BorderLayout.WEST);
+            whiteTimerPanel.add(whiteTimerLabel, BorderLayout.EAST);
+            timerPanel.add(whiteTimerPanel);
+            
+            return timerPanel;
+        }
+        
         private JPanel createInfoPanel() {
             JPanel panel = new JPanel();
             panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
@@ -714,6 +1118,11 @@ public class Chess {
             panel.add(gameInfoPanel);
             panel.add(Box.createRigidArea(new Dimension(0, 20)));
             
+            // Timer display section
+            JPanel timerPanel = createTimerPanel();
+            panel.add(timerPanel);
+            panel.add(Box.createRigidArea(new Dimension(0, 20)));
+            
             // Move history section
             JLabel historyLabel = new JLabel("Move History");
             historyLabel.setFont(new Font("Segoe UI", Font.BOLD, 16));
@@ -747,13 +1156,64 @@ public class Chess {
                 movesListModel.clear();
                 moveCounter = 0;
                 lastMove = null;
+                
+                // Reset timer if enabled
+                if (timerEnabled && chessTimer != null) {
+                    // Store current settings
+                    int minutes = (int)(chessTimer.whiteTime / 60000);
+                    int increment = (int)(chessTimer.increment / 1000);
+                    chessTimer.reset(minutes > 0 ? minutes : 10, increment);
+                    chessTimer.start(Color.WHITE);
+                }
+                
                 boardPanel.clearSelection();
                 updateStatus();
                 boardPanel.repaint();
             });
             
             JButton undoBtn = createStyledButton("Undo Move");
-            undoBtn.setEnabled(false); // TODO: implement undo
+            undoBtn.addActionListener(e -> {
+                if (game.undo()) {
+                    // Remove last move from history display
+                    if (movesListModel.size() > 0) {
+                        movesListModel.remove(movesListModel.size() - 1);
+                        moveCounter--;
+                    }
+                    // Get the last move from the previous state
+                    lastMove = game.getLastMoveFromUndo();
+                    boardPanel.clearSelection();
+                    updateStatus();
+                    boardPanel.repaint();
+                } else {
+                    JOptionPane.showMessageDialog(frame, 
+                        "No moves to undo!", 
+                        "Undo", 
+                        JOptionPane.INFORMATION_MESSAGE);
+                }
+            });
+            
+            JButton redoBtn = createStyledButton("Redo Move");
+            redoBtn.addActionListener(e -> {
+                if (game.redo()) {
+                    // Re-add the move to history display
+                    Move redoneMove = game.getLastMoveFromUndo();
+                    if (redoneMove != null) {
+                        moveCounter++;
+                        String moveStr = formatMove(redoneMove, moveCounter);
+                        movesListModel.addElement(moveStr);
+                        movesList.ensureIndexIsVisible(movesListModel.getSize() - 1);
+                        lastMove = redoneMove;
+                    }
+                    boardPanel.clearSelection();
+                    updateStatus();
+                    boardPanel.repaint();
+                } else {
+                    JOptionPane.showMessageDialog(frame, 
+                        "No moves to redo!", 
+                        "Redo", 
+                        JOptionPane.INFORMATION_MESSAGE);
+                }
+            });
             
             JButton resignBtn = createStyledButton("Resign");
             resignBtn.addActionListener(e -> {
@@ -770,6 +1230,8 @@ public class Chess {
             buttonsPanel.add(newBtn);
             buttonsPanel.add(Box.createRigidArea(new Dimension(0, 10)));
             buttonsPanel.add(undoBtn);
+            buttonsPanel.add(Box.createRigidArea(new Dimension(0, 10)));
+            buttonsPanel.add(redoBtn);
             buttonsPanel.add(Box.createRigidArea(new Dimension(0, 10)));
             buttonsPanel.add(resignBtn);
             
@@ -893,6 +1355,11 @@ public class Chess {
                             if (ok) {
                                 moveCounter++;
                                 lastMove = candidate;
+                                
+                                // Switch timer after move
+                                if (timerEnabled && chessTimer != null) {
+                                    chessTimer.switchPlayer();
+                                }
                                 
                                 // Format move in algebraic notation
                                 String moveStr = formatMove(candidate, moveCounter);
@@ -1210,6 +1677,12 @@ public class Chess {
                 if (ok) {
                     moveCounter++;
                     lastMove = candidate;
+                    
+                    // Switch timer after move
+                    if (timerEnabled && chessTimer != null) {
+                        chessTimer.switchPlayer();
+                    }
+                    
                     String moveStr = formatMove(candidate, moveCounter);
                     movesListModel.addElement(moveStr);
                     movesList.ensureIndexIsVisible(movesListModel.getSize() - 1);
@@ -1252,8 +1725,207 @@ public class Chess {
             return "?";
         }
 
+        private void setupTimer(int minutes, int incrementSeconds) {
+            timerEnabled = true;
+            chessTimer = new ChessTimer(minutes, incrementSeconds);
+            
+            // Create update timer that refreshes display every 100ms
+            if (timerUpdateTimer != null) {
+                timerUpdateTimer.stop();
+            }
+            timerUpdateTimer = new javax.swing.Timer(100, e -> updateTimerDisplay());
+            timerUpdateTimer.start();
+            
+            // Start the chess timer for white
+            chessTimer.start(Color.WHITE);
+            updateTimerDisplay();
+            
+            JOptionPane.showMessageDialog(frame, 
+                String.format("Timer set: %d minutes + %d seconds increment", minutes, incrementSeconds),
+                "Timer Started",
+                JOptionPane.INFORMATION_MESSAGE);
+        }
+        
+        private void setupCustomTimer() {
+            JPanel panel = new JPanel(new java.awt.GridLayout(2, 2, 5, 5));
+            JTextField minutesField = new JTextField("10");
+            JTextField incrementField = new JTextField("0");
+            panel.add(new JLabel("Minutes per side:"));
+            panel.add(minutesField);
+            panel.add(new JLabel("Increment (seconds):"));
+            panel.add(incrementField);
+            
+            int result = JOptionPane.showConfirmDialog(frame, panel, 
+                "Custom Timer Setup", JOptionPane.OK_CANCEL_OPTION);
+            
+            if (result == JOptionPane.OK_OPTION) {
+                try {
+                    int minutes = Integer.parseInt(minutesField.getText());
+                    int increment = Integer.parseInt(incrementField.getText());
+                    if (minutes > 0 && increment >= 0) {
+                        setupTimer(minutes, increment);
+                    } else {
+                        JOptionPane.showMessageDialog(frame, 
+                            "Please enter positive values", "Error", JOptionPane.ERROR_MESSAGE);
+                    }
+                } catch (NumberFormatException ex) {
+                    JOptionPane.showMessageDialog(frame, 
+                        "Please enter valid numbers", "Error", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }
+        
+        private void disableTimer() {
+            timerEnabled = false;
+            if (chessTimer != null) {
+                chessTimer.stop();
+            }
+            if (timerUpdateTimer != null) {
+                timerUpdateTimer.stop();
+            }
+            whiteTimerLabel.setText("--:--");
+            blackTimerLabel.setText("--:--");
+            JOptionPane.showMessageDialog(frame, "Timer disabled", 
+                "Timer", JOptionPane.INFORMATION_MESSAGE);
+        }
+        
+        private void updateTimerDisplay() {
+            if (!timerEnabled || chessTimer == null) return;
+            
+            String whiteTime = chessTimer.formatTime(chessTimer.getWhiteTime());
+            String blackTime = chessTimer.formatTime(chessTimer.getBlackTime());
+            
+            whiteTimerLabel.setText(whiteTime);
+            blackTimerLabel.setText(blackTime);
+            
+            // Highlight active player's timer
+            if (chessTimer.isRunning()) {
+                if (game.getTurn() == Color.WHITE) {
+                    whiteTimerLabel.setForeground(java.awt.Color.GREEN);
+                    blackTimerLabel.setForeground(PANEL_FG);
+                } else {
+                    blackTimerLabel.setForeground(java.awt.Color.GREEN);
+                    whiteTimerLabel.setForeground(PANEL_FG);
+                }
+            }
+            
+            // Check for time out
+            if (chessTimer.isWhiteOutOfTime()) {
+                chessTimer.stop();
+                timerUpdateTimer.stop();
+                whiteTimerLabel.setForeground(java.awt.Color.RED);
+                JOptionPane.showMessageDialog(frame, 
+                    "⏱ White ran out of time! Black wins!", 
+                    "Time's Up!", 
+                    JOptionPane.INFORMATION_MESSAGE);
+            } else if (chessTimer.isBlackOutOfTime()) {
+                chessTimer.stop();
+                timerUpdateTimer.stop();
+                blackTimerLabel.setForeground(java.awt.Color.RED);
+                JOptionPane.showMessageDialog(frame, 
+                    "⏱ Black ran out of time! White wins!", 
+                    "Time's Up!", 
+                    JOptionPane.INFORMATION_MESSAGE);
+            }
+        }
+        
         private void createMenuBar() {
             JMenuBar mb = new JMenuBar();
+            
+            // Game menu
+            JMenu gameMenu = new JMenu("Game");
+            
+            JMenuItem newGameItem = new JMenuItem("New Game");
+            newGameItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N, KeyEvent.CTRL_DOWN_MASK));
+            newGameItem.addActionListener(e -> {
+                game.restart();
+                movesListModel.clear();
+                moveCounter = 0;
+                lastMove = null;
+                
+                // Reset timer if enabled
+                if (timerEnabled && chessTimer != null) {
+                    int minutes = (int)(chessTimer.whiteTime / 60000);
+                    int increment = (int)(chessTimer.increment / 1000);
+                    chessTimer.reset(minutes > 0 ? minutes : 10, increment);
+                    chessTimer.start(Color.WHITE);
+                }
+                
+                boardPanel.clearSelection();
+                updateStatus();
+                boardPanel.repaint();
+            });
+            
+            JMenuItem undoItem = new JMenuItem("Undo Move");
+            undoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Z, KeyEvent.CTRL_DOWN_MASK));
+            undoItem.addActionListener(e -> {
+                if (game.undo()) {
+                    if (movesListModel.size() > 0) {
+                        movesListModel.remove(movesListModel.size() - 1);
+                        moveCounter--;
+                    }
+                    lastMove = game.getLastMoveFromUndo();
+                    boardPanel.clearSelection();
+                    updateStatus();
+                    boardPanel.repaint();
+                }
+            });
+            
+            JMenuItem redoItem = new JMenuItem("Redo Move");
+            redoItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Y, KeyEvent.CTRL_DOWN_MASK));
+            redoItem.addActionListener(e -> {
+                if (game.redo()) {
+                    Move redoneMove = game.getLastMoveFromUndo();
+                    if (redoneMove != null) {
+                        moveCounter++;
+                        String moveStr = formatMove(redoneMove, moveCounter);
+                        movesListModel.addElement(moveStr);
+                        movesList.ensureIndexIsVisible(movesListModel.getSize() - 1);
+                        lastMove = redoneMove;
+                    }
+                    boardPanel.clearSelection();
+                    updateStatus();
+                    boardPanel.repaint();
+                }
+            });
+            
+            gameMenu.add(newGameItem);
+            gameMenu.addSeparator();
+            gameMenu.add(undoItem);
+            gameMenu.add(redoItem);
+            mb.add(gameMenu);
+            
+            // Timer menu
+            JMenu timerMenu = new JMenu("Timer");
+            
+            JMenuItem timer5_0 = new JMenuItem("5 minutes (no increment)");
+            timer5_0.addActionListener(e -> setupTimer(5, 0));
+            
+            JMenuItem timer10_0 = new JMenuItem("10 minutes (no increment)");
+            timer10_0.addActionListener(e -> setupTimer(10, 0));
+            
+            JMenuItem timer15_10 = new JMenuItem("15 minutes + 10 sec");
+            timer15_10.addActionListener(e -> setupTimer(15, 10));
+            
+            JMenuItem timer30_0 = new JMenuItem("30 minutes (no increment)");
+            timer30_0.addActionListener(e -> setupTimer(30, 0));
+            
+            JMenuItem timerCustom = new JMenuItem("Custom...");
+            timerCustom.addActionListener(e -> setupCustomTimer());
+            
+            JMenuItem timerDisable = new JMenuItem("Disable Timer");
+            timerDisable.addActionListener(e -> disableTimer());
+            
+            timerMenu.add(timer5_0);
+            timerMenu.add(timer10_0);
+            timerMenu.add(timer15_10);
+            timerMenu.add(timer30_0);
+            timerMenu.addSeparator();
+            timerMenu.add(timerCustom);
+            timerMenu.add(timerDisable);
+            mb.add(timerMenu);
+            
+            // View menu
             JMenu view = new JMenu("View");
             JCheckBoxMenuItem imagesToggle = new JCheckBoxMenuItem("Use Images", useImages);
             imagesToggle.addActionListener(e -> { useImages = imagesToggle.isSelected(); boardPanel.repaint(); });
@@ -1262,6 +1934,7 @@ public class Chess {
             view.add(imagesToggle);
             view.add(contrastToggle);
             mb.add(view);
+            
             frame.setJMenuBar(mb);
         }
 
