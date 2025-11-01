@@ -34,6 +34,7 @@ Fifty-move rule implementation
 Stalemate detection improvements
 Difficulty: Medium-Hard
 Impact: Medium - For serious players
+Status: ✅ COMPLETE
 🤖 AI Features
 5. Computer Opponent 🎯
 Minimax algorithm with alpha-beta pruning
@@ -54,12 +55,14 @@ Updates after each move
 Difficulty: Medium
 Impact: Medium - Helps understand position
 🎨 Visual & UX Enhancements
-8. Piece Animation ✨
-Smooth sliding when pieces move
-Capture animations
-Check/checkmate visual effects
+8. ✅ Piece Animation ✨ [IMPLEMENTED]
+Smooth sliding when pieces move (250ms cubic ease-out)
+Capture animations (fade + scale effects)
+Check/checkmate visual effects (pulsing overlays)
+60 FPS animation timer
 Difficulty: Medium
 Impact: High - Much more polished feel
+Status: ✅ COMPLETE - See ANIMATION_COMPLETE.md
 9. Board Themes 🎨
 Multiple color schemes (blue, green, brown, marble)
 Light/Dark mode toggle
@@ -74,18 +77,23 @@ Castling sound
 Promotion sound
 Difficulty: Easy
 Impact: Medium - Enhances experience
-11. Drag and Drop 🖱️
-Currently: Click to select, click to move
-Add: Drag piece to destination
-Visual feedback while dragging
+11. ✅ Drag and Drop 🖱️ [IMPLEMENTED]
+Kept: Click to select, click to move (backward compatible)
+Added: Drag piece to destination (press-drag-release)
+Visual feedback while dragging (78% opacity + shadow)
+Smooth cursor tracking at 60+ FPS
+Smart detection (click vs drag)
 Difficulty: Medium
 Impact: High - More intuitive
-12. Board Flip/Rotate 🔄
-View from black's perspective
-Auto-flip after each move
-Manual flip button
+Status: ✅ COMPLETE - See DRAG_DROP_COMPLETE.md
+12. ✅ Board Flip/Rotate 🔄 [IMPLEMENTED]
+View from black's perspective (180° rotation)
+Auto-flip after each move (toggle in menu)
+Manual flip button (F key shortcut)
+Works with all features (animations, drag-drop, etc.)
 Difficulty: Easy
 Impact: Medium - Better for 2-player
+Status: ✅ COMPLETE - See BOARD_FLIP_COMPLETE.md
 📊 Analysis Features
 13. Move History Navigation 📜
 Click on move to jump to that position

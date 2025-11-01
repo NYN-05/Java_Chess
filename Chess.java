@@ -8,6 +8,7 @@ import java.awt.Graphics2D;
 import java.awt.FontMetrics;
 import java.awt.image.BufferedImage;
 import java.awt.RenderingHints;
+import java.awt.AlphaComposite;
 import java.awt.BorderLayout;
 import javax.imageio.ImageIO;
 import java.io.File;
@@ -397,6 +398,115 @@ public class Chess {
         }
     }
 
+    // Animation system for smooth piece movements
+    static class PieceAnimation {
+        Pos from;
+        Pos to;
+        Piece piece;
+        Piece capturedPiece;
+        long startTime;
+        long duration; // in milliseconds
+        boolean isCapture;
+        
+        PieceAnimation(Pos from, Pos to, Piece piece, Piece capturedPiece, long duration) {
+            this.from = from;
+            this.to = to;
+            this.piece = piece;
+            this.capturedPiece = capturedPiece;
+            this.startTime = System.currentTimeMillis();
+            this.duration = duration;
+            this.isCapture = (capturedPiece != null);
+        }
+        
+        // Get current animation progress (0.0 to 1.0)
+        double getProgress() {
+            long elapsed = System.currentTimeMillis() - startTime;
+            if (elapsed >= duration) return 1.0;
+            // Ease-out cubic for smooth deceleration
+            double t = (double) elapsed / duration;
+            return 1 - Math.pow(1 - t, 3);
+        }
+        
+        boolean isComplete() {
+            return System.currentTimeMillis() - startTime >= duration;
+        }
+        
+        // Get interpolated position for drawing
+        double getX(int cellSize, int xOff) {
+            double progress = getProgress();
+            return xOff + (from.c + (to.c - from.c) * progress) * cellSize;
+        }
+        
+        double getY(int cellSize, int yOff) {
+            double progress = getProgress();
+            return yOff + (from.r + (to.r - from.r) * progress) * cellSize;
+        }
+    }
+    
+    // Visual effect for check/checkmate
+    static class CheckEffect {
+        Pos kingPos;
+        long startTime;
+        long duration;
+        boolean isCheckmate;
+        
+        CheckEffect(Pos kingPos, boolean isCheckmate, long duration) {
+            this.kingPos = kingPos;
+            this.isCheckmate = isCheckmate;
+            this.startTime = System.currentTimeMillis();
+            this.duration = duration;
+        }
+        
+        boolean isActive() {
+            return System.currentTimeMillis() - startTime < duration;
+        }
+        
+        // Pulsing opacity for check effect
+        int getAlpha() {
+            long elapsed = System.currentTimeMillis() - startTime;
+            if (elapsed >= duration) return 0;
+            
+            // Pulse effect: 0.3 to 0.7 opacity
+            double cycle = (elapsed % 500) / 500.0; // 0.5 second cycle
+            double sine = Math.sin(cycle * Math.PI * 2);
+            return (int) ((0.5 + sine * 0.2) * 255);
+        }
+    }
+    
+    // Capture animation effect
+    static class CaptureEffect {
+        Pos position;
+        long startTime;
+        long duration;
+        Piece capturedPiece;
+        
+        CaptureEffect(Pos position, Piece capturedPiece, long duration) {
+            this.position = position;
+            this.capturedPiece = capturedPiece;
+            this.startTime = System.currentTimeMillis();
+            this.duration = duration;
+        }
+        
+        boolean isActive() {
+            return System.currentTimeMillis() - startTime < duration;
+        }
+        
+        // Fade out and scale down
+        double getScale() {
+            long elapsed = System.currentTimeMillis() - startTime;
+            if (elapsed >= duration) return 0;
+            double progress = (double) elapsed / duration;
+            return 1.0 - progress; // Shrink to 0
+        }
+        
+        int getAlpha() {
+            long elapsed = System.currentTimeMillis() - startTime;
+            if (elapsed >= duration) return 0;
+            double progress = (double) elapsed / duration;
+            return (int) ((1.0 - progress) * 255); // Fade out
+        }
+    }
+
     // Game Statistics tracker
     static class GameStatistics {
         int whiteMaterial = 0;
@@ -686,6 +796,21 @@ public class Chess {
                         board.set(m.to, m.promotion);
                     }
 
+                    // Update half-move clock for fifty-move rule
+                    if (moved != null && moved.type == PieceType.PAWN || captured != null) {
+                        halfMoveClock = 0; // Reset on pawn move or capture
+                    } else {
+                        halfMoveClock++;
+                    }
+                    
+                    // Update position history for threefold repetition
+                    positionHistory.add(getPositionHash());
+                    
+                    // Update move number
+                    if (turn == Color.BLACK) {
+                        fullMoveNumber++;
+                    }
+
                     // Update the last move in the current state (top of undo stack)
                     if (!undoStack.isEmpty()) {
                         undoStack.peek().lastMove = m;
@@ -710,6 +835,9 @@ public class Chess {
             enPassantTarget = null;
             undoStack.clear();
             redoStack.clear();
+            positionHistory.clear();
+            halfMoveClock = 0;
+            fullMoveNumber = 1;
         }
 
         void run() {
@@ -918,6 +1046,120 @@ public class Chess {
                 }
             }
         }
+        
+        // Position hash for threefold repetition detection
+        String getPositionHash() {
+            StringBuilder sb = new StringBuilder();
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    Piece p = board.b[r][c];
+                    if (p == null) {
+                        sb.append('.');
+                    } else {
+                        sb.append(p.toString());
+                    }
+                }
+            }
+            // Include turn and castling rights
+            sb.append(turn == Color.WHITE ? 'W' : 'B');
+            sb.append(whiteKingMoved ? '0' : '1');
+            sb.append(blackKingMoved ? '0' : '1');
+            sb.append(whiteRookA_moved ? '0' : '1');
+            sb.append(whiteRookH_moved ? '0' : '1');
+            sb.append(blackRookA_moved ? '0' : '1');
+            sb.append(blackRookH_moved ? '0' : '1');
+            // Include en passant target
+            if (enPassantTarget != null) {
+                sb.append(enPassantTarget.toString());
+            }
+            return sb.toString();
+        }
+        
+        // Check for threefold repetition
+        boolean isThreefoldRepetition() {
+            String currentPosition = getPositionHash();
+            int count = 0;
+            for (String pos : positionHistory) {
+                if (pos.equals(currentPosition)) {
+                    count++;
+                    if (count >= 3) return true;
+                }
+            }
+            return false;
+        }
+        
+        // Check for fifty-move rule
+        boolean isFiftyMoveRule() {
+            return halfMoveClock >= 100; // 100 half-moves = 50 full moves
+        }
+        
+        // Check for insufficient material (dead position)
+        boolean isInsufficientMaterial() {
+            List<Piece> pieces = new ArrayList<>();
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    Piece p = board.b[r][c];
+                    if (p != null && p.type != PieceType.KING) {
+                        pieces.add(p);
+                    }
+                }
+            }
+            
+            // King vs King
+            if (pieces.isEmpty()) return true;
+            
+            // King + minor piece vs King
+            if (pieces.size() == 1) {
+                PieceType type = pieces.get(0).type;
+                return type == PieceType.BISHOP || type == PieceType.KNIGHT;
+            }
+            
+            // King + Bishop vs King + Bishop (same color squares)
+            if (pieces.size() == 2) {
+                if (pieces.get(0).type == PieceType.BISHOP && pieces.get(1).type == PieceType.BISHOP) {
+                    // Find bishops
+                    Pos bishop1Pos = null, bishop2Pos = null;
+                    for (int r = 0; r < 8; r++) {
+                        for (int c = 0; c < 8; c++) {
+                            Piece p = board.b[r][c];
+                            if (p != null && p.type == PieceType.BISHOP) {
+                                if (bishop1Pos == null) bishop1Pos = new Pos(r, c);
+                                else bishop2Pos = new Pos(r, c);
+                            }
+                        }
+                    }
+                    // Same color square?
+                    if (bishop1Pos != null && bishop2Pos != null) {
+                        boolean bishop1Light = (bishop1Pos.r + bishop1Pos.c) % 2 == 0;
+                        boolean bishop2Light = (bishop2Pos.r + bishop2Pos.c) % 2 == 0;
+                        return bishop1Light == bishop2Light;
+                    }
+                }
+            }
+            
+            return false;
+        }
+        
+        // Enhanced stalemate detection
+        boolean isStalemate() {
+            // Must not be in check
+            if (isInCheck(turn)) return false;
+            
+            // Must have no legal moves
+            List<Move> moves = legalMoves(turn);
+            if (!moves.isEmpty()) return false;
+            
+            return true;
+        }
+        
+        // Check for draw by any rule
+        String getDrawReason() {
+            if (isStalemate()) return "Stalemate";
+            if (isThreefoldRepetition()) return "Threefold Repetition";
+            if (isFiftyMoveRule()) return "Fifty-Move Rule";
+            if (isInsufficientMaterial()) return "Insufficient Material";
+            return null;
+        }
     }
 
     // --- Enhanced Professional Swing GUI ---
@@ -947,6 +1189,10 @@ public class Chess {
         private final Map<Integer, Map<String, Image>> scaledImageCache = new HashMap<>(5); // typical 5 sizes
         private boolean useImages = true;
         private boolean highContrast = false;
+        
+        // Board orientation
+        private boolean boardFlipped = false;
+        private boolean autoFlip = false;
         
         // Optimization: Cache rendering hints for reuse
         private static final RenderingHints QUALITY_HINTS = new RenderingHints(
@@ -1277,6 +1523,18 @@ public class Chess {
             // Update move counter
             moveCountLabel.setText(String.valueOf(moveCounter));
             
+            // Check for draw conditions first
+            String drawReason = game.getDrawReason();
+            if (drawReason != null) {
+                statusLabel.setText("Draw - " + drawReason);
+                statusLabel.setForeground(new java.awt.Color(255, 200, 100));
+                JOptionPane.showMessageDialog(frame, 
+                    "The game is a draw: " + drawReason,
+                    "Game Over - Draw",
+                    JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            
             // Update status text
             if (inCheck) {
                 statusLabel.setText("⚠ " + who + " is in CHECK!");
@@ -1317,6 +1575,18 @@ public class Chess {
                 sb.append("   ");
             }
             sb.append(move.from).append("-").append(move.to);
+            
+            // Add check/checkmate symbols
+            boolean inCheck = game.isInCheck(game.getTurn());
+            if (inCheck) {
+                List<Move> moves = game.getLegalMovesForTurn();
+                if (moves.isEmpty()) {
+                    sb.append("‡"); // Checkmate symbol
+                } else {
+                    sb.append("†"); // Check symbol
+                }
+            }
+            
             return sb.toString();
         }
 
@@ -1328,6 +1598,19 @@ public class Chess {
             int cellSize = 0; // integer cell size (pixels)
             int xOff = 0, yOff = 0; // integer offsets where board starts
             Pos keyboardCursor = new Pos(7,4); // start cursor
+            
+            // Animation fields
+            PieceAnimation currentAnimation = null;
+            CheckEffect checkEffect = null;
+            CaptureEffect captureEffect = null;
+            javax.swing.Timer animationTimer = null;
+            
+            // Drag and drop fields
+            Pos dragSource = null;
+            Piece draggedPiece = null;
+            int dragX = 0;
+            int dragY = 0;
+            boolean isDragging = false;
 
             BoardPanel() {
                 setFocusable(true);
@@ -1338,23 +1621,45 @@ public class Chess {
                         computeBoardGeometry();
                         int mx = e.getX();
                         int my = e.getY();
-                        int col = (int)Math.floor((mx - xOff) / (double)cellSize);
-                        int row = (int)Math.floor((my - yOff) / (double)cellSize);
-                        if (col < 0 || col > 7 || row < 0 || row > 7) return;
+                        int displayCol = (int)Math.floor((mx - xOff) / (double)cellSize);
+                        int displayRow = (int)Math.floor((my - yOff) / (double)cellSize);
+                        if (displayCol < 0 || displayCol > 7 || displayRow < 0 || displayRow > 7) return;
+                        
+                        // Convert display coordinates to logical board coordinates
+                        int row = getLogicalRow(displayRow);
+                        int col = getLogicalCol(displayCol);
                         Pos clicked = new Pos(row, col);
-                        if (selected == null) {
-                            Piece p = game.getBoard().get(clicked);
-                            if (p != null && p.color == game.getTurn()) {
-                                selected = clicked;
-                                targets = computeTargets(selected);
-                                repaint();
-                            }
+                        
+                        // Check if we're starting a drag operation
+                        Piece p = game.getBoard().get(clicked);
+                        if (p != null && p.color == game.getTurn()) {
+                            // Start drag operation
+                            dragSource = clicked;
+                            draggedPiece = p;
+                            dragX = mx;
+                            dragY = my;
+                            isDragging = false; // Will become true on mouseDragged
+                            
+                            // Also set selection for click-to-move compatibility
+                            selected = clicked;
+                            targets = computeTargets(selected);
+                            repaint();
+                        } else if (selected == null) {
+                            // Clicking empty square with no selection - do nothing
                         } else {
                             Move candidate = new Move(selected, clicked);
+                            
+                            // Store piece and capture info before move
+                            Piece movingPiece = game.getBoard().get(selected);
+                            Piece capturedPiece = game.getBoard().get(clicked);
+                            
                             boolean ok = game.applyMoveIfLegal(candidate);
                             if (ok) {
                                 moveCounter++;
                                 lastMove = candidate;
+                                
+                                // Start piece animation
+                                startAnimation(selected, clicked, movingPiece, capturedPiece);
                                 
                                 // Switch timer after move
                                 if (timerEnabled && chessTimer != null) {
@@ -1370,10 +1675,25 @@ public class Chess {
                                 
                                 selected = null; targets = null;
                                 updateStatus();
+                                
+                                // Auto-flip board if enabled
+                                if (autoFlip) {
+                                    boardFlipped = !boardFlipped;
+                                    System.out.println("Auto-flip triggered! boardFlipped=" + boardFlipped);
+                                }
+                                
+                                // Check for check/checkmate effects
+                                if (game.isInCheck(game.getTurn())) {
+                                    Pos kingPos = findKingPosition(game.getTurn());
+                                    List<Move> moves = game.getLegalMovesForTurn();
+                                    boolean isCheckmate = moves.isEmpty();
+                                    checkEffect = new CheckEffect(kingPos, isCheckmate, isCheckmate ? 2000 : 1500);
+                                }
+                                
                                 repaint();
                             } else {
-                                Piece p = game.getBoard().get(clicked);
-                                if (p != null && p.color == game.getTurn()) {
+                                Piece clickedPiece = game.getBoard().get(clicked);
+                                if (clickedPiece != null && clickedPiece.color == game.getTurn()) {
                                     selected = clicked;
                                     targets = computeTargets(selected);
                                     repaint();
@@ -1383,7 +1703,93 @@ public class Chess {
                             }
                         }
                     }
+                    
+                    @Override public void mouseReleased(MouseEvent e) {
+                        if (dragSource != null && isDragging) {
+                            // Complete drag operation
+                            computeBoardGeometry();
+                            int mx = e.getX();
+                            int my = e.getY();
+                            int displayCol = (int)Math.floor((mx - xOff) / (double)cellSize);
+                            int displayRow = (int)Math.floor((my - yOff) / (double)cellSize);
+                            
+                            // Reset drag state
+                            isDragging = false;
+                            draggedPiece = null;
+                            
+                            if (displayCol >= 0 && displayCol <= 7 && displayRow >= 0 && displayRow <= 7) {
+                                // Convert display coordinates to logical board coordinates
+                                int row = getLogicalRow(displayRow);
+                                int col = getLogicalCol(displayCol);
+                                Pos dropPos = new Pos(row, col);
+                                Move candidate = new Move(dragSource, dropPos);
+                                
+                                // Store piece and capture info before move
+                                Piece movingPiece = game.getBoard().get(dragSource);
+                                Piece capturedPiece = game.getBoard().get(dropPos);
+                                
+                                boolean ok = game.applyMoveIfLegal(candidate);
+                                if (ok) {
+                                    moveCounter++;
+                                    lastMove = candidate;
+                                    
+                                    // Start piece animation
+                                    startAnimation(dragSource, dropPos, movingPiece, capturedPiece);
+                                    
+                                    // Switch timer after move
+                                    if (timerEnabled && chessTimer != null) {
+                                        chessTimer.switchPlayer();
+                                    }
+                                    
+                                    // Format move in algebraic notation
+                                    String moveStr = formatMove(candidate, moveCounter);
+                                    movesListModel.addElement(moveStr);
+                                    
+                                    // Auto-scroll to latest move
+                                    movesList.ensureIndexIsVisible(movesListModel.getSize() - 1);
+                                    
+                                    selected = null; 
+                                    targets = null;
+                                    dragSource = null;
+                                    updateStatus();
+                                    
+                                    // Auto-flip board if enabled
+                                    if (autoFlip) {
+                                        boardFlipped = !boardFlipped;
+                                        System.out.println("Auto-flip triggered (drag)! boardFlipped=" + boardFlipped);
+                                    }
+                                    
+                                    // Check for check/checkmate effects
+                                    if (game.isInCheck(game.getTurn())) {
+                                        Pos kingPos = findKingPosition(game.getTurn());
+                                        List<Move> moves = game.getLegalMovesForTurn();
+                                        boolean isCheckmate = moves.isEmpty();
+                                        checkEffect = new CheckEffect(kingPos, isCheckmate, isCheckmate ? 2000 : 1500);
+                                    }
+                                }
+                            }
+                            
+                            dragSource = null;
+                            repaint();
+                        } else if (dragSource != null && !isDragging) {
+                            // Click without drag - handled by mousePressed already
+                            dragSource = null;
+                        }
+                    }
                 });
+                
+                // Add mouse motion listener for drag operations
+                addMouseMotionListener(new MouseMotionAdapter() {
+                    @Override public void mouseDragged(MouseEvent e) {
+                        if (dragSource != null) {
+                            isDragging = true;
+                            dragX = e.getX();
+                            dragY = e.getY();
+                            repaint();
+                        }
+                    }
+                });
+                
                 // keyboard bindings
                 setupKeyBindings();
             }
@@ -1397,6 +1803,63 @@ public class Chess {
             void clearSelection() { 
                 selected = null; 
                 targets = null; 
+            }
+            
+            // Board flip helper methods
+            int getDisplayRow(int logicalRow) {
+                return boardFlipped ? (7 - logicalRow) : logicalRow;
+            }
+            
+            int getDisplayCol(int logicalCol) {
+                return boardFlipped ? (7 - logicalCol) : logicalCol;
+            }
+            
+            int getLogicalRow(int displayRow) {
+                return boardFlipped ? (7 - displayRow) : displayRow;
+            }
+            
+            int getLogicalCol(int displayCol) {
+                return boardFlipped ? (7 - displayCol) : displayCol;
+            }
+            
+            // Find king position for check effects
+            Pos findKingPosition(Color color) {
+                for (int r = 0; r < 8; r++) {
+                    for (int c = 0; c < 8; c++) {
+                        Piece p = game.getBoard().b[r][c];
+                        if (p != null && p.type == PieceType.KING && p.color == color) {
+                            return new Pos(r, c);
+                        }
+                    }
+                }
+                return null;
+            }
+            
+            // Start piece animation
+            void startAnimation(Pos from, Pos to, Piece piece, Piece capturedPiece) {
+                // Create animation with 250ms duration for smooth movement
+                currentAnimation = new PieceAnimation(from, to, piece, capturedPiece, 250);
+                
+                // Create capture effect if there was a capture
+                if (capturedPiece != null) {
+                    captureEffect = new CaptureEffect(to, capturedPiece, 400);
+                }
+                
+                // Start animation timer
+                if (animationTimer != null && animationTimer.isRunning()) {
+                    animationTimer.stop();
+                }
+                
+                animationTimer = new javax.swing.Timer(16, e -> { // ~60 FPS
+                    repaint();
+                    if (currentAnimation != null && currentAnimation.isComplete()) {
+                        currentAnimation = null;
+                        if (animationTimer != null) {
+                            animationTimer.stop();
+                        }
+                    }
+                });
+                animationTimer.start();
             }
             
             // Optimization: Clear image cache to free memory if needed
@@ -1441,8 +1904,10 @@ public class Chess {
                 // Draw squares with subtle depth
                 for (int r = 0; r < 8; r++) {
                     for (int c = 0; c < 8; c++) {
-                        int x = xOff + c * cellSize;
-                        int y = yOff + r * cellSize;
+                        int displayRow = getDisplayRow(r);
+                        int displayCol = getDisplayCol(c);
+                        int x = xOff + displayCol * cellSize;
+                        int y = yOff + displayRow * cellSize;
                         boolean light = ((r + c) % 2 == 0);
                         
                         // Base square color
@@ -1464,23 +1929,25 @@ public class Chess {
                 // Highlight last move
                 if (lastMove != null) {
                     g2.setColor(LAST_MOVE_HIGHLIGHT);
-                    g2.fillRect(xOff + lastMove.from.c * cellSize, yOff + lastMove.from.r * cellSize, 
-                        cellSize, cellSize);
-                    g2.fillRect(xOff + lastMove.to.c * cellSize, yOff + lastMove.to.r * cellSize, 
-                        cellSize, cellSize);
+                    int fromX = xOff + getDisplayCol(lastMove.from.c) * cellSize;
+                    int fromY = yOff + getDisplayRow(lastMove.from.r) * cellSize;
+                    int toX = xOff + getDisplayCol(lastMove.to.c) * cellSize;
+                    int toY = yOff + getDisplayRow(lastMove.to.r) * cellSize;
+                    g2.fillRect(fromX, fromY, cellSize, cellSize);
+                    g2.fillRect(toX, toY, cellSize, cellSize);
                 }
                 
                 // Highlight selected square with glow effect
                 if (selected != null) {
+                    int selX = xOff + getDisplayCol(selected.c) * cellSize;
+                    int selY = yOff + getDisplayRow(selected.r) * cellSize;
                     g2.setColor(SELECTED_HIGHLIGHT);
-                    g2.fillRect(xOff + selected.c * cellSize, yOff + selected.r * cellSize, 
-                        cellSize, cellSize);
+                    g2.fillRect(selX, selY, cellSize, cellSize);
                     
                     // Add border to selected square
                     g2.setColor(new java.awt.Color(255, 255, 0, 255));
                     g2.setStroke(new java.awt.BasicStroke(3));
-                    g2.drawRect(xOff + selected.c * cellSize + 2, yOff + selected.r * cellSize + 2, 
-                        cellSize - 4, cellSize - 4);
+                    g2.drawRect(selX + 2, selY + 2, cellSize - 4, cellSize - 4);
                 }
                 
                 // Highlight legal move targets with circles
@@ -1489,8 +1956,8 @@ public class Chess {
                         Piece targetPiece = game.getBoard().get(p);
                         boolean isCapture = (targetPiece != null);
                         
-                        int x = xOff + p.c * cellSize;
-                        int y = yOff + p.r * cellSize;
+                        int x = xOff + getDisplayCol(p.c) * cellSize;
+                        int y = yOff + getDisplayRow(p.r) * cellSize;
                         
                         if (isCapture) {
                             // Capture indicator - ring around the square
@@ -1518,59 +1985,172 @@ public class Chess {
                 // Draw coordinate labels
                 drawCoordinates(g2);
                 
+                // Draw check effect if active
+                if (checkEffect != null && checkEffect.isActive()) {
+                    Pos kingPos = checkEffect.kingPos;
+                    if (kingPos != null) {
+                        int kingX = xOff + getDisplayCol(kingPos.c) * cellSize;
+                        int kingY = yOff + getDisplayRow(kingPos.r) * cellSize;
+                        int alpha = checkEffect.getAlpha();
+                        if (checkEffect.isCheckmate) {
+                            // Red pulsing for checkmate
+                            g2.setColor(new java.awt.Color(255, 0, 0, alpha));
+                        } else {
+                            // Orange pulsing for check
+                            g2.setColor(new java.awt.Color(255, 150, 0, alpha));
+                        }
+                        g2.fillRect(kingX, kingY, cellSize, cellSize);
+                        
+                        // Draw border around king square
+                        g2.setStroke(new java.awt.BasicStroke(3));
+                        g2.setColor(new java.awt.Color(255, 0, 0, Math.min(255, alpha + 50)));
+                        g2.drawRect(kingX + 2, kingY + 2, cellSize - 4, cellSize - 4);
+                    }
+                } else if (checkEffect != null && !checkEffect.isActive()) {
+                    checkEffect = null; // Clean up inactive effect
+                }
+                
                 // Draw pieces with enhanced visuals
                 for (int r = 0; r < 8; r++) {
                     for (int c = 0; c < 8; c++) {
+                        Pos currentPos = new Pos(r, c);
+                        
+                        // Skip piece if it's being animated
+                        if (currentAnimation != null && 
+                            (currentPos.equals(currentAnimation.from) || currentPos.equals(currentAnimation.to))) {
+                            continue;
+                        }
+                        
+                        // Skip piece if it's being dragged
+                        if (isDragging && dragSource != null && currentPos.equals(dragSource)) {
+                            continue;
+                        }
+                        
                         Piece p = game.getBoard().b[r][c];
                         if (p != null) {
-                            // Optimization: Use more efficient key generation
-                            String key = getPieceKey(p);
-                            int px = xOff + c * cellSize;
-                            int py = yOff + r * cellSize;
-                            
-                            if (useImages) {
-                                Image img = getScaledImage(key, cellSize);
-                                if (img != null) {
-                                    // Add subtle shadow under pieces
-                                    g2.setColor(new java.awt.Color(0, 0, 0, 40));
-                                    g2.fillOval(px + cellSize/6, py + cellSize - cellSize/8, 
-                                        cellSize*2/3, cellSize/10);
-                                    g2.drawImage(img, px, py, null);
-                                    continue;
-                                }
-                            }
-                            
-                            // Enhanced Unicode rendering with better styling
-                            String s = unicodeFor(p);
-                            int fontSize = Math.max(16, cellSize * 7 / 10);
-                            Font font = new Font("Segoe UI Symbol", Font.PLAIN, fontSize);
-                            g2.setFont(font);
-                            FontMetrics fm = g2.getFontMetrics();
-                            int strW = fm.stringWidth(s);
-                            int strH = fm.getAscent();
-                            int sx = px + (cellSize - strW)/2;
-                            int sy = py + (cellSize - strH)/2 + strH;
-                            
-                            // Drop shadow for depth
-                            g2.setColor(new java.awt.Color(0, 0, 0, 100));
-                            g2.drawString(s, sx + 2, sy + 2);
-                            
-                            // Main piece color
-                            if (p.color == Color.WHITE) {
-                                g2.setColor(new java.awt.Color(255, 255, 255));
-                                g2.drawString(s, sx, sy);
-                                // Add outline for better visibility
-                                g2.setColor(new java.awt.Color(50, 50, 50, 80));
-                                g2.setStroke(new java.awt.BasicStroke(1));
-                            } else {
-                                g2.setColor(new java.awt.Color(30, 30, 30));
-                                g2.drawString(s, sx, sy);
-                            }
+                            int px = xOff + getDisplayCol(c) * cellSize;
+                            int py = yOff + getDisplayRow(r) * cellSize;
+                            drawPiece(g2, p, px, py, cellSize, 255);
                         }
                     }
                 }
                 
+                // Draw capture effect
+                if (captureEffect != null && captureEffect.isActive()) {
+                    Pos pos = captureEffect.position;
+                    double scale = captureEffect.getScale();
+                    int alpha = captureEffect.getAlpha();
+                    
+                    if (scale > 0 && alpha > 0) {
+                        int scaledSize = (int) (cellSize * scale);
+                        int offset = (cellSize - scaledSize) / 2;
+                        int baseX = xOff + getDisplayCol(pos.c) * cellSize;
+                        int baseY = yOff + getDisplayRow(pos.r) * cellSize;
+                        int px = baseX + offset;
+                        int py = baseY + offset;
+                        
+                        // Draw fading captured piece
+                        Graphics2D g2Temp = (Graphics2D) g2.create();
+                        g2Temp.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha / 255f));
+                        drawPiece(g2Temp, captureEffect.capturedPiece, px, py, scaledSize, alpha);
+                        g2Temp.dispose();
+                    }
+                } else if (captureEffect != null && !captureEffect.isActive()) {
+                    captureEffect = null; // Clean up inactive effect
+                }
+                
+                // Draw animated piece on top
+                if (currentAnimation != null) {
+                    // Get display positions for from and to
+                    int fromDispCol = getDisplayCol(currentAnimation.from.c);
+                    int fromDispRow = getDisplayRow(currentAnimation.from.r);
+                    int toDispCol = getDisplayCol(currentAnimation.to.c);
+                    int toDispRow = getDisplayRow(currentAnimation.to.r);
+                    
+                    // Interpolate in display space
+                    double progress = currentAnimation.getProgress();
+                    double x = xOff + (fromDispCol + (toDispCol - fromDispCol) * progress) * cellSize;
+                    double y = yOff + (fromDispRow + (toDispRow - fromDispRow) * progress) * cellSize;
+                    drawPiece(g2, currentAnimation.piece, (int) x, (int) y, cellSize, 255);
+                }
+                
+                // Draw dragged piece at cursor position
+                if (isDragging && draggedPiece != null) {
+                    // Center piece on cursor with slight transparency for feedback
+                    int px = dragX - cellSize / 2;
+                    int py = dragY - cellSize / 2;
+                    
+                    // Draw shadow under dragged piece for depth
+                    g2.setColor(new java.awt.Color(0, 0, 0, 100));
+                    g2.fillOval(px + cellSize/6, py + cellSize - cellSize/8 + 5, 
+                        cellSize*2/3, cellSize/10);
+                    
+                    // Draw piece with slight transparency (200/255 = ~78% opacity)
+                    drawPiece(g2, draggedPiece, px, py, cellSize, 200);
+                }
+                
                 g2.dispose();
+            }
+            
+            // Helper method to draw a piece at a specific position with optional alpha
+            private void drawPiece(Graphics2D g2, Piece p, int px, int py, int size, int alpha) {
+                String key = getPieceKey(p);
+                
+                if (useImages) {
+                    Image img = getScaledImage(key, size);
+                    if (img != null) {
+                        // Add subtle shadow under pieces
+                        if (alpha == 255) {
+                            g2.setColor(new java.awt.Color(0, 0, 0, 40));
+                            g2.fillOval(px + size/6, py + size - size/8, size*2/3, size/10);
+                        }
+                        
+                        // Draw image with alpha if needed
+                        if (alpha < 255) {
+                            Graphics2D g2Temp = (Graphics2D) g2.create();
+                            g2Temp.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha / 255f));
+                            g2Temp.drawImage(img, px, py, null);
+                            g2Temp.dispose();
+                        } else {
+                            g2.drawImage(img, px, py, null);
+                        }
+                        return;
+                    }
+                }
+                
+                // Enhanced Unicode rendering with better styling
+                String s = unicodeFor(p);
+                int fontSize = Math.max(16, size * 7 / 10);
+                Font font = new Font("Segoe UI Symbol", Font.PLAIN, fontSize);
+                g2.setFont(font);
+                FontMetrics fm = g2.getFontMetrics();
+                int strW = fm.stringWidth(s);
+                int strH = fm.getAscent();
+                int sx = px + (size - strW)/2;
+                int sy = py + (size - strH)/2 + strH;
+                
+                // Apply alpha if needed
+                Graphics2D g2Temp = (alpha < 255) ? (Graphics2D) g2.create() : g2;
+                if (alpha < 255) {
+                    g2Temp.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha / 255f));
+                }
+                
+                // Drop shadow for depth
+                g2Temp.setColor(new java.awt.Color(0, 0, 0, Math.min(100, alpha)));
+                g2Temp.drawString(s, sx + 2, sy + 2);
+                
+                // Main piece color
+                if (p.color == Color.WHITE) {
+                    g2Temp.setColor(new java.awt.Color(255, 255, 255, alpha));
+                    g2Temp.drawString(s, sx, sy);
+                } else {
+                    g2Temp.setColor(new java.awt.Color(30, 30, 30, alpha));
+                    g2Temp.drawString(s, sx, sy);
+                }
+                
+                if (alpha < 255) {
+                    g2Temp.dispose();
+                }
             }
             
             private void drawCoordinates(Graphics2D g2) {
@@ -1579,18 +2159,20 @@ public class Chess {
                 FontMetrics fm = g2.getFontMetrics();
                 
                 // Draw file labels (a-h) at bottom
-                for (int c = 0; c < 8; c++) {
-                    String label = String.valueOf((char)('a' + c));
-                    int x = xOff + c * cellSize + (cellSize - fm.stringWidth(label)) / 2;
+                for (int logicalCol = 0; logicalCol < 8; logicalCol++) {
+                    int displayCol = getDisplayCol(logicalCol);
+                    String label = String.valueOf((char)('a' + logicalCol));
+                    int x = xOff + displayCol * cellSize + (cellSize - fm.stringWidth(label)) / 2;
                     int y = yOff + 8 * cellSize + fm.getAscent() + 5;
                     g2.drawString(label, x, y);
                 }
                 
                 // Draw rank labels (1-8) on left side
-                for (int r = 0; r < 8; r++) {
-                    String label = String.valueOf(8 - r);
+                for (int logicalRow = 0; logicalRow < 8; logicalRow++) {
+                    int displayRow = getDisplayRow(logicalRow);
+                    String label = String.valueOf(8 - logicalRow);
                     int x = xOff - fm.stringWidth(label) - 8;
-                    int y = yOff + r * cellSize + (cellSize + fm.getAscent()) / 2 - 2;
+                    int y = yOff + displayRow * cellSize + (cellSize + fm.getAscent()) / 2 - 2;
                     g2.drawString(label, x, y);
                 }
             }
@@ -1933,6 +2515,20 @@ public class Chess {
             contrastToggle.addActionListener(e -> { highContrast = contrastToggle.isSelected(); boardPanel.repaint(); });
             view.add(imagesToggle);
             view.add(contrastToggle);
+            view.addSeparator();
+            
+            // Board orientation options
+            JMenuItem flipBoard = new JMenuItem("Flip Board");
+            flipBoard.setAccelerator(KeyStroke.getKeyStroke("F"));
+            flipBoard.addActionListener(e -> { boardFlipped = !boardFlipped; boardPanel.repaint(); });
+            JCheckBoxMenuItem autoFlipToggle = new JCheckBoxMenuItem("Auto-Flip After Move", autoFlip);
+            autoFlipToggle.addActionListener(e -> { 
+                autoFlip = autoFlipToggle.isSelected(); 
+                System.out.println("Auto-flip setting changed to: " + autoFlip);
+            });
+            view.add(flipBoard);
+            view.add(autoFlipToggle);
+            
             mb.add(view);
             
             frame.setJMenuBar(mb);
