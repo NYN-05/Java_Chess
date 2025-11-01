@@ -506,6 +506,109 @@ public class Chess {
             return (int) ((1.0 - progress) * 255); // Fade out
         }
     }
+    
+    // Evaluation Bar Component - Shows who's winning
+    static class EvaluationBar extends JPanel {
+        private double evaluation = 0.0; // Positive = White winning, Negative = Black winning
+        private static final int BAR_WIDTH = 30;
+        private static final int MIN_HEIGHT = 200;
+        private static final java.awt.Color WHITE_COLOR = new java.awt.Color(240, 240, 240);
+        private static final java.awt.Color BLACK_COLOR = new java.awt.Color(60, 60, 60);
+        private static final java.awt.Color BORDER_COLOR = new java.awt.Color(100, 100, 100);
+        
+        EvaluationBar() {
+            setPreferredSize(new Dimension(BAR_WIDTH, MIN_HEIGHT));
+            setMinimumSize(new Dimension(BAR_WIDTH, MIN_HEIGHT));
+            setBackground(new java.awt.Color(45, 45, 45));
+            setToolTipText("Position evaluation");
+        }
+        
+        void setEvaluation(double eval) {
+            this.evaluation = eval;
+            // Update tooltip
+            String evalText;
+            if (Math.abs(eval) < 0.1) {
+                evalText = "Equal (0.0)";
+            } else if (eval > 0) {
+                evalText = "White +" + String.format("%.1f", eval);
+            } else {
+                evalText = "Black +" + String.format("%.1f", -eval);
+            }
+            setToolTipText(evalText);
+            repaint();
+        }
+        
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            Graphics2D g2d = (Graphics2D) g;
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            
+            int width = getWidth();
+            int height = getHeight();
+            
+            // Clamp evaluation to reasonable range (-10 to +10 pawns)
+            double clampedEval = Math.max(-10.0, Math.min(10.0, evaluation));
+            
+            // Convert evaluation to percentage (0 = all black, 1 = all white, 0.5 = equal)
+            // -10 = 0%, 0 = 50%, +10 = 100%
+            double percentage = (clampedEval + 10.0) / 20.0;
+            
+            // Calculate split position (top = white, bottom = black)
+            int splitY = (int) (height * (1.0 - percentage));
+            
+            // Draw white portion (top)
+            g2d.setColor(WHITE_COLOR);
+            g2d.fillRect(0, 0, width, splitY);
+            
+            // Draw black portion (bottom)
+            g2d.setColor(BLACK_COLOR);
+            g2d.fillRect(0, splitY, width, height - splitY);
+            
+            // Draw center line (equilibrium)
+            int centerY = height / 2;
+            g2d.setColor(new java.awt.Color(150, 150, 150, 100));
+            g2d.setStroke(new java.awt.BasicStroke(1, java.awt.BasicStroke.CAP_BUTT,
+                java.awt.BasicStroke.JOIN_BEVEL, 0, new float[]{4, 4}, 0));
+            g2d.drawLine(0, centerY, width, centerY);
+            
+            // Draw evaluation text
+            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, 
+                RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2d.setFont(new Font("SansSerif", Font.BOLD, 11));
+            
+            String evalText;
+            if (Math.abs(evaluation) < 0.1) {
+                evalText = "0.0";
+            } else if (evaluation > 0) {
+                evalText = "+" + String.format("%.1f", evaluation);
+            } else {
+                evalText = String.format("%.1f", evaluation);
+            }
+            
+            // Position text in middle
+            FontMetrics fm = g2d.getFontMetrics();
+            int textWidth = fm.stringWidth(evalText);
+            int textHeight = fm.getHeight();
+            int textX = (width - textWidth) / 2;
+            int textY = centerY + textHeight / 3;
+            
+            // Draw text with outline for visibility
+            g2d.setColor(evaluation >= 0 ? BLACK_COLOR : WHITE_COLOR);
+            g2d.drawString(evalText, textX - 1, textY);
+            g2d.drawString(evalText, textX + 1, textY);
+            g2d.drawString(evalText, textX, textY - 1);
+            g2d.drawString(evalText, textX, textY + 1);
+            
+            g2d.setColor(evaluation >= 0 ? WHITE_COLOR : BLACK_COLOR);
+            g2d.drawString(evalText, textX, textY);
+            
+            // Draw border
+            g2d.setColor(BORDER_COLOR);
+            g2d.setStroke(new java.awt.BasicStroke(2));
+            g2d.drawRect(0, 0, width - 1, height - 1);
+        }
+    }
 
     // Game Statistics tracker
     static class GameStatistics {
@@ -568,6 +671,140 @@ public class Chess {
         String getMaterialString(Color color) {
             int material = (color == Color.WHITE) ? whiteMaterial : blackMaterial;
             return String.valueOf(material);
+        }
+    }
+    
+    // Position Evaluator - Calculates who's winning
+    static class PositionEvaluator {
+        // Piece-square tables for positional evaluation (centipawns)
+        // Higher values = better positions for White
+        private static final int[][] PAWN_TABLE = {
+            {  0,  0,  0,  0,  0,  0,  0,  0},
+            { 50, 50, 50, 50, 50, 50, 50, 50},
+            { 10, 10, 20, 30, 30, 20, 10, 10},
+            {  5,  5, 10, 25, 25, 10,  5,  5},
+            {  0,  0,  0, 20, 20,  0,  0,  0},
+            {  5, -5,-10,  0,  0,-10, -5,  5},
+            {  5, 10, 10,-20,-20, 10, 10,  5},
+            {  0,  0,  0,  0,  0,  0,  0,  0}
+        };
+        
+        private static final int[][] KNIGHT_TABLE = {
+            {-50,-40,-30,-30,-30,-30,-40,-50},
+            {-40,-20,  0,  0,  0,  0,-20,-40},
+            {-30,  0, 10, 15, 15, 10,  0,-30},
+            {-30,  5, 15, 20, 20, 15,  5,-30},
+            {-30,  0, 15, 20, 20, 15,  0,-30},
+            {-30,  5, 10, 15, 15, 10,  5,-30},
+            {-40,-20,  0,  5,  5,  0,-20,-40},
+            {-50,-40,-30,-30,-30,-30,-40,-50}
+        };
+        
+        private static final int[][] BISHOP_TABLE = {
+            {-20,-10,-10,-10,-10,-10,-10,-20},
+            {-10,  0,  0,  0,  0,  0,  0,-10},
+            {-10,  0,  5, 10, 10,  5,  0,-10},
+            {-10,  5,  5, 10, 10,  5,  5,-10},
+            {-10,  0, 10, 10, 10, 10,  0,-10},
+            {-10, 10, 10, 10, 10, 10, 10,-10},
+            {-10,  5,  0,  0,  0,  0,  5,-10},
+            {-20,-10,-10,-10,-10,-10,-10,-20}
+        };
+        
+        private static final int[][] ROOK_TABLE = {
+            {  0,  0,  0,  0,  0,  0,  0,  0},
+            {  5, 10, 10, 10, 10, 10, 10,  5},
+            { -5,  0,  0,  0,  0,  0,  0, -5},
+            { -5,  0,  0,  0,  0,  0,  0, -5},
+            { -5,  0,  0,  0,  0,  0,  0, -5},
+            { -5,  0,  0,  0,  0,  0,  0, -5},
+            { -5,  0,  0,  0,  0,  0,  0, -5},
+            {  0,  0,  0,  5,  5,  0,  0,  0}
+        };
+        
+        private static final int[][] QUEEN_TABLE = {
+            {-20,-10,-10, -5, -5,-10,-10,-20},
+            {-10,  0,  0,  0,  0,  0,  0,-10},
+            {-10,  0,  5,  5,  5,  5,  0,-10},
+            { -5,  0,  5,  5,  5,  5,  0, -5},
+            {  0,  0,  5,  5,  5,  5,  0, -5},
+            {-10,  5,  5,  5,  5,  5,  0,-10},
+            {-10,  0,  5,  0,  0,  0,  0,-10},
+            {-20,-10,-10, -5, -5,-10,-10,-20}
+        };
+        
+        private static final int[][] KING_TABLE = {
+            {-30,-40,-40,-50,-50,-40,-40,-30},
+            {-30,-40,-40,-50,-50,-40,-40,-30},
+            {-30,-40,-40,-50,-50,-40,-40,-30},
+            {-30,-40,-40,-50,-50,-40,-40,-30},
+            {-20,-30,-30,-40,-40,-30,-30,-20},
+            {-10,-20,-20,-20,-20,-20,-20,-10},
+            { 20, 20,  0,  0,  0,  0, 20, 20},
+            { 20, 30, 10,  0,  0, 10, 30, 20}
+        };
+        
+        // Evaluate position from White's perspective
+        // Returns score in pawns (positive = White winning, negative = Black winning)
+        static double evaluatePosition(Board board, Game game) {
+            double score = 0.0;
+            
+            // 1. Material evaluation (largest factor)
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    Piece p = board.b[r][c];
+                    if (p != null) {
+                        int materialValue = getMaterialValue(p.type);
+                        int positionalValue = getPositionalValue(p, r, c);
+                        int totalValue = materialValue + positionalValue;
+                        
+                        if (p.color == Color.WHITE) {
+                            score += totalValue / 100.0; // Convert centipawns to pawns
+                        } else {
+                            score -= totalValue / 100.0;
+                        }
+                    }
+                }
+            }
+            
+            // 2. Mobility (number of legal moves)
+            int whiteMoves = game.legalMoves(Color.WHITE).size();
+            int blackMoves = game.legalMoves(Color.BLACK).size();
+            score += (whiteMoves - blackMoves) * 0.1; // Each move worth 0.1 pawns
+            
+            // 3. Check bonus
+            if (game.isInCheck(Color.BLACK)) score += 0.5;
+            if (game.isInCheck(Color.WHITE)) score -= 0.5;
+            
+            // Round to 1 decimal place
+            return Math.round(score * 10.0) / 10.0;
+        }
+        
+        private static int getMaterialValue(PieceType type) {
+            return switch (type) {
+                case PAWN -> 100;
+                case KNIGHT -> 320;
+                case BISHOP -> 330;
+                case ROOK -> 500;
+                case QUEEN -> 900;
+                case KING -> 20000; // King is invaluable
+            };
+        }
+        
+        private static int getPositionalValue(Piece p, int row, int col) {
+            // Get piece-square table value
+            int[][] table = switch (p.type) {
+                case PAWN -> PAWN_TABLE;
+                case KNIGHT -> KNIGHT_TABLE;
+                case BISHOP -> BISHOP_TABLE;
+                case ROOK -> ROOK_TABLE;
+                case QUEEN -> QUEEN_TABLE;
+                case KING -> KING_TABLE;
+            };
+            
+            // For Black pieces, flip the table vertically
+            int r = (p.color == Color.WHITE) ? row : (7 - row);
+            return table[r][col];
         }
     }
 
@@ -1194,6 +1431,9 @@ public class Chess {
         private boolean boardFlipped = false;
         private boolean autoFlip = false;
         
+        // Evaluation bar
+        private EvaluationBar evaluationBar;
+        
         // Optimization: Cache rendering hints for reuse
         private static final RenderingHints QUALITY_HINTS = new RenderingHints(
             RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -1249,9 +1489,18 @@ public class Chess {
             // Create enhanced info panel
             JPanel infoPanel = createInfoPanel();
             
+            // Create evaluation bar
+            evaluationBar = new EvaluationBar();
+            
+            // Create board container with evaluation bar on the left
+            JPanel boardContainer = new JPanel(new BorderLayout(5, 0));
+            boardContainer.setBackground(PANEL_BG);
+            boardContainer.add(evaluationBar, BorderLayout.WEST);
+            boardContainer.add(boardPanel, BorderLayout.CENTER);
+            
             // Create main layout with better proportions
             frame.getContentPane().setLayout(new BorderLayout(10, 10));
-            frame.getContentPane().add(boardPanel, BorderLayout.CENTER);
+            frame.getContentPane().add(boardContainer, BorderLayout.CENTER);
             frame.getContentPane().add(infoPanel, BorderLayout.EAST);
             
             frame.setMinimumSize(new Dimension(900, 700));
@@ -1522,6 +1771,10 @@ public class Chess {
             
             // Update move counter
             moveCountLabel.setText(String.valueOf(moveCounter));
+            
+            // Update evaluation bar
+            double evaluation = PositionEvaluator.evaluatePosition(game.getBoard(), game);
+            evaluationBar.setEvaluation(evaluation);
             
             // Check for draw conditions first
             String drawReason = game.getDrawReason();
