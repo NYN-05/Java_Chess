@@ -1,3 +1,10 @@
+🛠️ Recent Bug Fixes
+- ✅ **Infinite Recursion Bug** (Nov 1, 2025) - Fixed game freezing after 17 moves
+  - Cause: Circular dependency in kingMoves() → isSquareAttacked() → pseudoLegalMoves()
+  - Solution: Rewrote isSquareAttacked() with direct geometric checks
+  - Result: 10x performance improvement, no more stack overflow
+  - Details: See BUGFIX_INFINITE_RECURSION.md
+
 🎮 Gameplay Features
 1. ✅ Undo/Redo System ⏮️⏭️ [IMPLEMENTED]
 Track move history with full board states

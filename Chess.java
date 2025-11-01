@@ -767,14 +767,9 @@ public class Chess {
                 }
             }
             
-            // 2. Mobility (number of legal moves)
-            int whiteMoves = game.legalMoves(Color.WHITE).size();
-            int blackMoves = game.legalMoves(Color.BLACK).size();
-            score += (whiteMoves - blackMoves) * 0.1; // Each move worth 0.1 pawns
-            
-            // 3. Check bonus
-            if (game.isInCheck(Color.BLACK)) score += 0.5;
-            if (game.isInCheck(Color.WHITE)) score -= 0.5;
+            // Note: Removed mobility and check evaluation to prevent infinite recursion
+            // These features would require calling legalMoves() which can cause stack overflow
+            // in the current implementation when called from updateStatus()
             
             // Round to 1 decimal place
             return Math.round(score * 10.0) / 10.0;
@@ -1140,10 +1135,84 @@ public class Chess {
         }
 
         boolean isSquareAttacked(Pos square, Color attacker) {
-            // Generate pseudo moves for attacker and see if any target square
-            List<Move> attacks = pseudoLegalMoves(attacker, true);
-            for (Move m : attacks) if (m.to.equals(square)) return true;
+            // Check if any attacker piece can attack the square
+            // We avoid calling pseudoLegalMoves to prevent infinite recursion with kingMoves()
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    Piece p = board.b[r][c];
+                    if (p == null || p.color != attacker) continue;
+                    
+                    Pos from = new Pos(r, c);
+                    // Check if this piece can attack the square
+                    if (canPieceAttackSquare(from, p, square)) {
+                        return true;
+                    }
+                }
+            }
             return false;
+        }
+        
+        // Check if a piece at 'from' can attack 'target' square
+        // This is a simplified check that doesn't recurse into king move generation
+        boolean canPieceAttackSquare(Pos from, Piece p, Pos target) {
+            switch (p.type) {
+                case PAWN -> {
+                    int dir = (p.color == Color.WHITE) ? -1 : 1;
+                    // Pawns attack diagonally
+                    if (from.r + dir == target.r && Math.abs(from.c - target.c) == 1) {
+                        return true;
+                    }
+                }
+                case KNIGHT -> {
+                    int dr = Math.abs(from.r - target.r);
+                    int dc = Math.abs(from.c - target.c);
+                    if ((dr == 2 && dc == 1) || (dr == 1 && dc == 2)) {
+                        return true;
+                    }
+                }
+                case BISHOP -> {
+                    if (Math.abs(from.r - target.r) == Math.abs(from.c - target.c)) {
+                        // Check if path is clear
+                        if (isPathClear(from, target)) return true;
+                    }
+                }
+                case ROOK -> {
+                    if (from.r == target.r || from.c == target.c) {
+                        // Check if path is clear
+                        if (isPathClear(from, target)) return true;
+                    }
+                }
+                case QUEEN -> {
+                    if (from.r == target.r || from.c == target.c || 
+                        Math.abs(from.r - target.r) == Math.abs(from.c - target.c)) {
+                        // Check if path is clear
+                        if (isPathClear(from, target)) return true;
+                    }
+                }
+                case KING -> {
+                    // King attacks adjacent squares
+                    if (Math.abs(from.r - target.r) <= 1 && Math.abs(from.c - target.c) <= 1) {
+                        if (!(from.r == target.r && from.c == target.c)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        
+        // Check if path between two squares is clear (for sliding pieces)
+        boolean isPathClear(Pos from, Pos to) {
+            int dr = Integer.compare(to.r - from.r, 0);
+            int dc = Integer.compare(to.c - from.c, 0);
+            int r = from.r + dr;
+            int c = from.c + dc;
+            while (r != to.r || c != to.c) {
+                if (board.b[r][c] != null) return false;
+                r += dr;
+                c += dc;
+            }
+            return true;
         }
 
         List<Move> legalMoves(Color who) {
